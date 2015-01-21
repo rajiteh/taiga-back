@@ -79,7 +79,7 @@ class IssuesFilter(filters.FilterBackend):
         filterdata = self._prepare_filters_data(request)
 
         if "tags" in filterdata:
-            queryset = tags.filter(queryset, contains=filterdata["tags"])
+            queryset = queryset.filter(tags__contains=filterdata["tags"])
 
         for name, value in filter(lambda x: x[0] != "tags", filterdata.items()):
             if None in value:
@@ -152,6 +152,13 @@ class IssueViewSet(OCCResourceMixin, HistoryResourceMixin, WatchedResourceMixin,
 
         if obj.type and obj.type.project != obj.project:
             raise exc.PermissionDenied(_("You don't have permissions to set this type to this issue."))
+
+    @list_route(methods=["GET"])
+    def by_ref(self, request):
+        ref = request.QUERY_PARAMS.get("ref", None)
+        project_id = request.QUERY_PARAMS.get("project", None)
+        issue = get_object_or_404(models.Issue, ref=ref, project_id=project_id)
+        return self.retrieve(request, pk=issue.pk)
 
     @list_route(methods=["POST"])
     def bulk_create(self, request, **kwargs):

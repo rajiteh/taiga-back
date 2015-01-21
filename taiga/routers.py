@@ -45,9 +45,10 @@ router.register(r"search", SearchViewSet, base_name="search")
 
 
 # Importer
-from taiga.export_import.api import ProjectImporterViewSet
+from taiga.export_import.api import ProjectImporterViewSet, ProjectExporterViewSet
 
 router.register(r"importer", ProjectImporterViewSet, base_name="importer")
+router.register(r"exporter", ProjectExporterViewSet, base_name="exporter")
 
 
 # Projects & Types
@@ -89,6 +90,10 @@ router.register(r"tasks/attachments", TaskAttachmentViewSet, base_name="task-att
 router.register(r"issues/attachments", IssueAttachmentViewSet, base_name="issue-attachments")
 router.register(r"wiki/attachments", WikiAttachmentViewSet, base_name="wiki-attachments")
 
+# Webhooks
+from taiga.webhooks.api import WebhookViewSet, WebhookLogViewSet
+router.register(r"webhooks", WebhookViewSet, base_name="webhooks")
+router.register(r"webhooklogs", WebhookLogViewSet, base_name="webhooklogs")
 
 # History & Components
 from taiga.projects.history.api import UserStoryHistory
@@ -132,8 +137,16 @@ from taiga.projects.notifications.api import NotifyPolicyViewSet
 router.register(r"notify-policies", NotifyPolicyViewSet, base_name="notifications")
 
 # GitHub webhooks
-from taiga.github_hook.api import GitHubViewSet
+from taiga.hooks.github.api import GitHubViewSet
 router.register(r"github-hook", GitHubViewSet, base_name="github-hook")
+
+# Gitlab webhooks
+from taiga.hooks.gitlab.api import GitLabViewSet
+router.register(r"gitlab-hook", GitLabViewSet, base_name="gitlab-hook")
+
+# Bitbucket webhooks
+from taiga.hooks.bitbucket.api import BitBucketViewSet
+router.register(r"bitbucket-hook", BitBucketViewSet, base_name="bitbucket-hook")
 
 # feedback
 #   - see taiga.feedback.routers and taiga.feedback.apps

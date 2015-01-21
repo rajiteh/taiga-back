@@ -33,7 +33,7 @@ LANGUAGES = (
 
 DATABASES = {
     "default": {
-        "ENGINE": "django.db.backends.postgresql_psycopg2",
+        "ENGINE": "transaction_hooks.backends.postgresql_psycopg2",
         "NAME": "taiga",
     }
 }
@@ -194,13 +194,18 @@ INSTALLED_APPS = [
     "taiga.mdrender",
     "taiga.export_import",
     "taiga.feedback",
-    "taiga.github_hook",
+    "taiga.hooks.github",
+    "taiga.hooks.gitlab",
+    "taiga.hooks.bitbucket",
+    "taiga.webhooks",
 
     "rest_framework",
     "djmail",
     "django_jinja",
+    "django_jinja.contrib._humanize",
     "easy_thumbnails",
     "raven.contrib.django.raven_compat",
+    "django_transactional_cleanup",
 ]
 
 WSGI_APPLICATION = "taiga.wsgi.application"
@@ -291,6 +296,16 @@ REST_FRAMEWORK = {
         # Mainly used for api debug.
         "taiga.auth.backends.Session",
     ),
+    "DEFAULT_THROTTLE_CLASSES": (
+        "taiga.base.throttling.AnonRateThrottle",
+        "taiga.base.throttling.UserRateThrottle"
+    ),
+    "DEFAULT_THROTTLE_RATES": {
+        "anon": None,
+        "user": None,
+        "import-mode": None,
+        "import-dump-mode": "1/minute",
+    },
     "FILTER_BACKEND": "taiga.base.filters.FilterBackend",
     "EXCEPTION_HANDLER": "taiga.base.exceptions.exception_handler",
     "PAGINATE_BY": 30,
@@ -298,6 +313,7 @@ REST_FRAMEWORK = {
     "MAX_PAGINATE_BY": 1000,
     "DATETIME_FORMAT": "%Y-%m-%dT%H:%M:%S%z"
 }
+
 
 DEFAULT_PROJECT_TEMPLATE = "scrum"
 PUBLIC_REGISTER_ENABLED = False
@@ -342,9 +358,17 @@ CHANGE_NOTIFICATIONS_MIN_INTERVAL = 0 #seconds
 # List of functions called for filling correctly the ProjectModulesConfig associated to a project
 # This functions should receive a Project parameter and return a dict with the desired configuration
 PROJECT_MODULES_CONFIGURATORS = {
-    "github": "taiga.github_hook.services.get_or_generate_config",
+    "github": "taiga.hooks.github.services.get_or_generate_config",
+    "gitlab": "taiga.hooks.gitlab.services.get_or_generate_config",
+    "bitbucket": "taiga.hooks.bitbucket.services.get_or_generate_config",
 }
 
+BITBUCKET_VALID_ORIGIN_IPS = ["131.103.20.165", "131.103.20.166"]
+GITLAB_VALID_ORIGIN_IPS = []
+
+EXPORTS_TTL = 60 * 60 * 24  # 24 hours
+CELERY_ENABLED = False
+WEBHOOKS_ENABLED = False
 
 # NOTE: DON'T INSERT MORE SETTINGS AFTER THIS LINE
 TEST_RUNNER="django.test.runner.DiscoverRunner"

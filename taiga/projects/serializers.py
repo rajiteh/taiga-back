@@ -30,6 +30,7 @@ from taiga.users.validators import RoleExistsValidator
 from taiga.permissions.service import get_user_project_permissions, is_project_owner
 
 from . import models
+from . import services
 from . validators import ProjectExistsValidator
 
 
@@ -38,6 +39,23 @@ from . validators import ProjectExistsValidator
 class PointsSerializer(ModelSerializer):
     class Meta:
         model = models.Points
+
+    def validate_name(self, attrs, source):
+        """
+        Check the points name is not duplicated in the project on creation
+        """
+        qs = None
+        # If the user story status exists:
+        if self.object and attrs.get("name", None):
+            qs = models.Points.objects.filter(project=self.object.project, name=attrs[source])
+
+        if not self.object and attrs.get("project", None)  and attrs.get("name", None):
+            qs = models.Points.objects.filter(project=attrs["project"], name=attrs[source])
+
+        if qs and qs.exists():
+              raise serializers.ValidationError("Name duplicated for the project")
+
+        return attrs
 
 
 class UserStoryStatusSerializer(ModelSerializer):
@@ -117,7 +135,7 @@ class IssueStatusSerializer(ModelSerializer):
               raise serializers.ValidationError("Name duplicated for the project")
 
         return attrs
-        
+
 
 class IssueTypeSerializer(ModelSerializer):
     class Meta:
@@ -130,6 +148,7 @@ class MembershipSerializer(ModelSerializer):
     role_name = serializers.CharField(source='role.name', required=False, read_only=True)
     full_name = serializers.CharField(source='user.get_full_name', required=False, read_only=True)
     user_email = serializers.EmailField(source='user.email', required=False, read_only=True)
+    is_user_active = serializers.BooleanField(source='user.is_active', required=False, read_only=True)
     email = serializers.EmailField(required=True)
     color = serializers.CharField(source='user.color', required=False, read_only=True)
     photo = serializers.SerializerMethodField("get_photo")
@@ -152,7 +171,10 @@ class MembershipSerializer(ModelSerializer):
         return obj.project.slug if obj and obj.project else ""
 
     def validate_email(self, attrs, source):
-        project = attrs["project"]
+        project = attrs.get("project", None)
+        if project is None:
+            project = self.object.project
+
         email = attrs[source]
 
         qs = models.Membership.objects.all()
@@ -167,6 +189,29 @@ class MembershipSerializer(ModelSerializer):
 
         if qs.count() > 0:
             raise serializers.ValidationError(_("Email address is already taken"))
+
+        return attrs
+
+    def validate_role(self, attrs, source):
+        project = attrs.get("project", None)
+        if project is None:
+            project = self.object.project
+
+        role = attrs[source]
+
+        if project.roles.filter(id=role.id).count() == 0:
+            raise serializers.ValidationError(_("Invalid role for the project"))
+
+        return attrs
+
+    def validate_is_owner(self, attrs, source):
+        is_owner = attrs[source]
+        project = attrs.get("project", None)
+        if project is None:
+            project = self.object.project
+
+        if self.object and not services.project_has_valid_owners(project, exclude_user=self.object.user):
+            raise serializers.ValidationError(_("At least one of the user must be an active admin"))
 
         return attrs
 
@@ -192,6 +237,8 @@ class ProjectSerializer(ModelSerializer):
     my_permissions = serializers.SerializerMethodField("get_my_permissions")
     i_am_owner = serializers.SerializerMethodField("get_i_am_owner")
     tags_colors = TagsColorsField(required=False)
+    users = serializers.SerializerMethodField("get_users")
+    total_closed_milestones = serializers.SerializerMethodField("get_total_closed_milestones")
 
     class Meta:
         model = models.Project
@@ -211,6 +258,12 @@ class ProjectSerializer(ModelSerializer):
         if "request" in self.context:
             return is_project_owner(self.context["request"].user, obj)
         return False
+
+    def get_users(self, obj):
+        return UserSerializer(obj.members.all(), many=True).data
+
+    def get_total_closed_milestones(self, obj):
+        return obj.milestones.filter(closed=True).count()
 
     def validate_total_milestones(self, attrs, source):
         """
@@ -278,6 +331,7 @@ class ProjectTemplateSerializer(ModelSerializer):
 
     class Meta:
         model = models.ProjectTemplate
+        read_only_fields = ("created_date", "modified_date")
 
 
 class StarredSerializer(ModelSerializer):

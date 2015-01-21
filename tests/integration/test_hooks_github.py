@@ -1,14 +1,14 @@
 import pytest
-import json
 
 from unittest import mock
 
 from django.core.urlresolvers import reverse
 from django.core import mail
 
-from taiga.github_hook.api import GitHubViewSet
-from taiga.github_hook import event_hooks
-from taiga.github_hook.exceptions import ActionSyntaxException
+from taiga.base.utils import json
+from taiga.hooks.github import event_hooks
+from taiga.hooks.github.api import GitHubViewSet
+from taiga.hooks.exceptions import ActionSyntaxException
 from taiga.projects.issues.models import Issue
 from taiga.projects.tasks.models import Task
 from taiga.projects.userstories.models import UserStory
@@ -75,8 +75,10 @@ def test_push_event_detected(client):
 
 def test_push_event_issue_processing(client):
     creation_status = f.IssueStatusFactory()
+    role = f.RoleFactory(project=creation_status.project, permissions=["view_issues"])
+    membership = f.MembershipFactory(project=creation_status.project, role=role, user=creation_status.project.owner)
     new_status = f.IssueStatusFactory(project=creation_status.project)
-    issue = f.IssueFactory.create(status=creation_status, project=creation_status.project)
+    issue = f.IssueFactory.create(status=creation_status, project=creation_status.project, owner=creation_status.project.owner)
     payload = {"commits": [
         {"message": """test message
             test   TG-%s    #%s   ok
@@ -93,8 +95,10 @@ def test_push_event_issue_processing(client):
 
 def test_push_event_task_processing(client):
     creation_status = f.TaskStatusFactory()
+    role = f.RoleFactory(project=creation_status.project, permissions=["view_tasks"])
+    membership = f.MembershipFactory(project=creation_status.project, role=role, user=creation_status.project.owner)
     new_status = f.TaskStatusFactory(project=creation_status.project)
-    task = f.TaskFactory.create(status=creation_status, project=creation_status.project)
+    task = f.TaskFactory.create(status=creation_status, project=creation_status.project, owner=creation_status.project.owner)
     payload = {"commits": [
         {"message": """test message
             test   TG-%s    #%s   ok
@@ -111,8 +115,10 @@ def test_push_event_task_processing(client):
 
 def test_push_event_user_story_processing(client):
     creation_status = f.UserStoryStatusFactory()
+    role = f.RoleFactory(project=creation_status.project, permissions=["view_us"])
+    membership = f.MembershipFactory(project=creation_status.project, role=role, user=creation_status.project.owner)
     new_status = f.UserStoryStatusFactory(project=creation_status.project)
-    user_story = f.UserStoryFactory.create(status=creation_status, project=creation_status.project)
+    user_story = f.UserStoryFactory.create(status=creation_status, project=creation_status.project, owner=creation_status.project.owner)
     payload = {"commits": [
         {"message": """test message
             test   TG-%s    #%s   ok
@@ -130,8 +136,10 @@ def test_push_event_user_story_processing(client):
 
 def test_push_event_processing_case_insensitive(client):
     creation_status = f.TaskStatusFactory()
+    role = f.RoleFactory(project=creation_status.project, permissions=["view_tasks"])
+    membership = f.MembershipFactory(project=creation_status.project, role=role, user=creation_status.project.owner)
     new_status = f.TaskStatusFactory(project=creation_status.project)
-    task = f.TaskFactory.create(status=creation_status, project=creation_status.project)
+    task = f.TaskFactory.create(status=creation_status, project=creation_status.project, owner=creation_status.project.owner)
     payload = {"commits": [
         {"message": """test message
             test   tg-%s    #%s   ok
@@ -219,7 +227,7 @@ def test_issues_event_opened_issue(client):
         "issue": {
             "title": "test-title",
             "body": "test-body",
-            "number": 10,
+            "html_url": "http://github.com/test/project/issues/11",
         },
         "assignee": {},
         "label": {},
@@ -249,7 +257,7 @@ def test_issues_event_other_than_opened_issue(client):
         "issue": {
             "title": "test-title",
             "body": "test-body",
-            "number": 10,
+            "html_url": "http://github.com/test/project/issues/11",
         },
         "assignee": {},
         "label": {},
@@ -291,17 +299,22 @@ def test_issues_event_bad_issue(client):
 
 
 def test_issue_comment_event_on_existing_issue_task_and_us(client):
-    issue = f.IssueFactory.create(external_reference=["github", "10"])
-    take_snapshot(issue, user=issue.owner)
-    task = f.TaskFactory.create(project=issue.project, external_reference=["github", "10"])
-    take_snapshot(task, user=task.owner)
-    us = f.UserStoryFactory.create(project=issue.project, external_reference=["github", "10"])
-    take_snapshot(us, user=us.owner)
+    project = f.ProjectFactory()
+    role = f.RoleFactory(project=project, permissions=["view_tasks", "view_issues", "view_us"])
+    membership = f.MembershipFactory(project=project, role=role, user=project.owner)
+    user = f.UserFactory()
+
+    issue = f.IssueFactory.create(external_reference=["github", "http://github.com/test/project/issues/11"], owner=project.owner, project=project)
+    take_snapshot(issue, user=user)
+    task = f.TaskFactory.create(external_reference=["github", "http://github.com/test/project/issues/11"], owner=project.owner, project=project)
+    take_snapshot(task, user=user)
+    us = f.UserStoryFactory.create(external_reference=["github", "http://github.com/test/project/issues/11"], owner=project.owner, project=project)
+    take_snapshot(us, user=user)
 
     payload = {
         "action": "created",
         "issue": {
-            "number": 10,
+            "html_url": "http://github.com/test/project/issues/11",
         },
         "comment": {
             "body": "Test body",
@@ -346,7 +359,7 @@ def test_issue_comment_event_on_not_existing_issue_task_and_us(client):
     payload = {
         "action": "created",
         "issue": {
-            "number": 11,
+            "html_url": "http://github.com/test/project/issues/11",
         },
         "comment": {
             "body": "Test body",
@@ -399,6 +412,7 @@ def test_issues_event_bad_comment(client):
 
 def test_api_get_project_modules(client):
     project = f.create_project()
+    membership = f.MembershipFactory(project=project, user=project.owner, is_owner=True)
 
     url = reverse("projects-modules", args=(project.id,))
 
@@ -413,6 +427,7 @@ def test_api_get_project_modules(client):
 
 def test_api_patch_project_modules(client):
     project = f.create_project()
+    membership = f.MembershipFactory(project=project, user=project.owner, is_owner=True)
 
     url = reverse("projects-modules", args=(project.id,))
 

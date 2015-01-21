@@ -103,28 +103,13 @@ class PermissionBasedFilterBackend(FilterBackend):
             memberships_qs = Membership.objects.filter(user=request.user)
             if project_id:
                 memberships_qs = memberships_qs.filter(project_id=project_id)
-
-            # Force users_role table inclusion
-            memberships_qs = memberships_qs.exclude(role__slug="not valid slug")
-            where_sql  = ["users_role.permissions @> ARRAY['{}']".format(self.permission)]
-            memberships_qs = memberships_qs.extra(where=where_sql)
+            memberships_qs = memberships_qs.filter(Q(role__permissions__contains=[self.permission]) | Q(is_owner=True))
 
             projects_list = [membership.project_id for membership in memberships_qs]
 
-            if len(projects_list) == 0:
-                qs = qs.filter(Q(project__owner=request.user))
-            elif len(projects_list) == 1:
-                qs = qs.filter(Q(project__owner=request.user) | Q(project=projects_list[0]))
-            else:
-                qs = qs.filter(Q(project__owner=request.user) | Q(project__in=projects_list))
-            extra_where = ExtraWhere(["projects_project.public_permissions @> ARRAY['{}']".format(
-                                                                                   self.permission)], [])
-            qs.query.where.add(extra_where, OR)
+            qs = qs.filter(Q(project_id__in=projects_list) | Q(project__public_permissions__contains=[self.permission]))
         else:
-            qs = qs.exclude(project__owner=-1)
-            extra_where = ExtraWhere(["projects_project.anon_permissions @> ARRAY['{}']".format(
-                                                                                 self.permission)], [])
-            qs.query.where.add(extra_where, AND)
+            qs = qs.filter(project__anon_permissions__contains=[self.permission])
 
         return super().filter_queryset(request, qs.distinct(), view)
 
@@ -197,19 +182,13 @@ class CanViewProjectObjFilterBackend(FilterBackend):
             memberships_qs = Membership.objects.filter(user=request.user)
             if project_id:
                 memberships_qs = memberships_qs.filter(project_id=project_id)
-            memberships_qs = memberships_qs.exclude(role__slug="not valid slug")  # Force users_role table inclusion
-            memberships_qs = memberships_qs.extra(where=["users_role.permissions @> ARRAY['view_project']"])
+            memberships_qs = memberships_qs.filter(Q(role__permissions__contains=['view_project']) | Q(is_owner=True))
+
             projects_list = [membership.project_id for membership in memberships_qs]
 
-            if len(projects_list) == 0:
-                qs = qs.filter(Q(owner=request.user))
-            elif len(projects_list) == 1:
-                qs = qs.filter(Q(owner=request.user) | Q(id=projects_list[0]))
-            else:
-                qs = qs.filter(Q(owner=request.user) | Q(id__in=projects_list))
-            qs.query.where.add(ExtraWhere(["projects_project.public_permissions @> ARRAY['view_project']"], []), OR)
+            qs = qs.filter(Q(id__in=projects_list) | Q(public_permissions__contains=["view_project"]))
         else:
-            qs.query.where.add(ExtraWhere(["projects_project.anon_permissions @> ARRAY['view_project']"], []), AND)
+            qs = qs.filter(public_permissions__contains=["view_project"])
 
         return super().filter_queryset(request, qs.distinct(), view)
 
@@ -219,12 +198,57 @@ class IsProjectMemberFilterBackend(FilterBackend):
         if request.user.is_authenticated() and request.user.is_superuser:
             queryset = queryset
         elif request.user.is_authenticated():
-            queryset = queryset.filter(Q(project__members=request.user) |
-                                       Q(project__owner=request.user))
+            queryset = queryset.filter(project__members=request.user)
         else:
             queryset = queryset.none()
 
         return super().filter_queryset(request, queryset.distinct(), view)
+
+class BaseIsProjectAdminFilterBackend(object):
+    def get_project_ids(self, request, view):
+        project_id = None
+        if hasattr(view, "filter_fields") and "project" in view.filter_fields:
+            project_id = request.QUERY_PARAMS.get("project", None)
+
+        if request.user.is_authenticated() and request.user.is_superuser:
+            return None
+
+        if not request.user.is_authenticated():
+            return []
+
+        memberships_qs = Membership.objects.filter(user=request.user, is_owner=True)
+        if project_id:
+            memberships_qs = memberships_qs.filter(project_id=project_id)
+
+        projects_list = [membership.project_id for membership in memberships_qs]
+
+        return projects_list
+
+
+class IsProjectAdminFilterBackend(FilterBackend, BaseIsProjectAdminFilterBackend):
+    def filter_queryset(self, request, queryset, view):
+        project_ids = self.get_project_ids(request, view)
+        if project_ids is None:
+            queryset = queryset
+        elif project_ids == []:
+            queryset = queryset.none()
+        else:
+            queryset = queryset.filter(project_id__in=project_ids)
+
+        return super().filter_queryset(request, queryset.distinct(), view)
+
+
+class IsProjectAdminFromWebhookLogFilterBackend(FilterBackend, BaseIsProjectAdminFilterBackend):
+    def filter_queryset(self, request, queryset, view):
+        project_ids = self.get_project_ids(request, view)
+        if project_ids is None:
+            queryset = queryset
+        elif project_ids == []:
+            queryset = queryset.none()
+        else:
+            queryset = queryset.filter(webhook__project_id__in=project_ids)
+
+        return super().filter_queryset(request, queryset, view)
 
 
 class TagsFilter(FilterBackend):
@@ -232,12 +256,16 @@ class TagsFilter(FilterBackend):
         self.filter_name = filter_name
 
     def _get_tags_queryparams(self, params):
-        return params.get(self.filter_name, "")
+        tags = params.get(self.filter_name, None)
+        if tags:
+            return tags.split(",")
+
+        return None
 
     def filter_queryset(self, request, queryset, view):
         query_tags = self._get_tags_queryparams(request.QUERY_PARAMS)
         if query_tags:
-            queryset = tags.filter(queryset, contains=query_tags)
+            queryset = queryset.filter(tags__contains=query_tags)
 
         return super().filter_queryset(request, queryset, view)
 

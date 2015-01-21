@@ -32,6 +32,7 @@ from taiga.projects.history.choices import HistoryType
 from taiga.projects.history.services import (make_key_from_model_object,
                                              get_last_snapshot_for_key,
                                              get_model_from_key)
+from taiga.permissions.service import user_has_perm
 from taiga.users.models import User
 
 from .models import HistoryChangeNotification
@@ -121,6 +122,23 @@ def analize_object_for_watchers(obj:object, history:object):
             obj.watchers.add(user)
 
 
+def _filter_by_permissions(obj, user):
+    UserStory = apps.get_model("userstories", "UserStory")
+    Issue = apps.get_model("issues", "Issue")
+    Task = apps.get_model("tasks", "Task")
+    WikiPage = apps.get_model("wiki", "WikiPage")
+
+    if isinstance(obj, UserStory):
+        return user_has_perm(user, "view_us", obj)
+    elif isinstance(obj, Issue):
+        return user_has_perm(user, "view_issues", obj)
+    elif isinstance(obj, Task):
+        return user_has_perm(user, "view_tasks", obj)
+    elif isinstance(obj, WikiPage):
+        return user_has_perm(user, "view_wiki_pages", obj)
+    return False
+
+
 def get_users_to_notify(obj, *, discard_users=None) -> list:
     """
     Get filtered set of users to notify for specified
@@ -148,6 +166,8 @@ def get_users_to_notify(obj, *, discard_users=None) -> list:
     # Remove the changer from candidates
     if discard_users:
         candidates = candidates - set(discard_users)
+
+    candidates = filter(partial(_filter_by_permissions, obj), candidates)
 
     return frozenset(candidates)
 
@@ -178,8 +198,8 @@ def _make_template_mail(name:str):
     instance for specified name, and return an instance
     of it.
     """
-    cls = type("TemplateMail",
-               (template_mail.TemplateMail,),
+    cls = type("InlineCSSTemplateMail",
+               (template_mail.InlineCSSTemplateMail,),
                {"name": name})
 
     return cls()
@@ -187,6 +207,9 @@ def _make_template_mail(name:str):
 
 @transaction.atomic
 def send_notifications(obj, *, history):
+    if history.is_hidden:
+        return None
+
     key = make_key_from_model_object(obj)
     owner = User.objects.get(pk=history.user["pk"])
     notification, created = (HistoryChangeNotification.objects.select_for_update()
@@ -227,7 +250,8 @@ def send_sync_notifications(notification_id):
     history_entries = tuple(notification.history_entries.all().order_by("created_at"))
     obj, _ = get_last_snapshot_for_key(notification.key)
 
-    context = {"snapshot": obj.snapshot,
+    context = {
+               "snapshot": obj.snapshot,
                "project": notification.project,
                "changer": notification.owner,
                "history_entries": history_entries}
@@ -237,6 +261,7 @@ def send_sync_notifications(notification_id):
     email = _make_template_mail(template_name)
 
     for user in notification.notify_users.distinct():
+        context["user"] = user
         email.send(user.email, context)
 
     notification.delete()

@@ -52,17 +52,17 @@ class UserStoryViewSet(OCCResourceMixin, HistoryResourceMixin, WatchedResourceMi
     filter_backends = (filters.CanViewUsFilterBackend, filters.TagsFilter,
                        filters.QFilter)
     retrieve_exclude_filters = (filters.TagsFilter,)
-    filter_fields = ['project', 'milestone', 'milestone__isnull', 'status', 'is_archived']
+    filter_fields = ['project', 'milestone', 'milestone__isnull', 'status', 'is_archived', 'status__is_archived']
 
     # Specific filter used for filtering neighbor user stories
     _neighbor_tags_filter = filters.TagsFilter('neighbor_tags')
 
     def get_queryset(self):
         qs = self.model.objects.all()
-        qs = qs.prefetch_related("points",
-                                 "role_points",
+        qs = qs.prefetch_related("role_points",
                                  "role_points__points",
-                                 "role_points__role")
+                                 "role_points__role",
+                                 "watchers")
         qs = qs.select_related("milestone", "project")
         return qs
 
@@ -95,6 +95,13 @@ class UserStoryViewSet(OCCResourceMixin, HistoryResourceMixin, WatchedResourceMi
 
         super().post_save(obj, created)
 
+    @list_route(methods=["GET"])
+    def by_ref(self, request):
+        ref = request.QUERY_PARAMS.get("ref", None)
+        project_id = request.QUERY_PARAMS.get("project", None)
+        userstory = get_object_or_404(models.UserStory, ref=ref, project_id=project_id)
+        return self.retrieve(request, pk=userstory.pk)
+
     @list_route(methods=["POST"])
     def bulk_create(self, request, **kwargs):
         serializer = serializers.UserStoriesBulkSerializer(data=request.DATA)
@@ -110,8 +117,7 @@ class UserStoryViewSet(OCCResourceMixin, HistoryResourceMixin, WatchedResourceMi
             return response.Ok(user_stories_serialized.data)
         return response.BadRequest(serializer.errors)
 
-    @list_route(methods=["POST"])
-    def bulk_update_backlog_order(self, request, **kwargs):
+    def _bulk_update_order(self, order_field, request, **kwargs):
         serializer = serializers.UpdateUserStoriesOrderBulkSerializer(data=request.DATA)
         if not serializer.is_valid():
             return response.BadRequest(serializer.errors)
@@ -122,42 +128,22 @@ class UserStoryViewSet(OCCResourceMixin, HistoryResourceMixin, WatchedResourceMi
         self.check_permissions(request, "bulk_update_order", project)
         services.update_userstories_order_in_bulk(data["bulk_stories"],
                                                   project=project,
-                                                  field="backlog_order")
+                                                  field=order_field)
         services.snapshot_userstories_in_bulk(data["bulk_stories"], request.user)
 
         return response.NoContent()
+
+    @list_route(methods=["POST"])
+    def bulk_update_backlog_order(self, request, **kwargs):
+        return self._bulk_update_order("backlog_order", request, **kwargs)
 
     @list_route(methods=["POST"])
     def bulk_update_sprint_order(self, request, **kwargs):
-        serializer = serializers.UpdateUserStoriesOrderBulkSerializer(data=request.DATA)
-        if not serializer.is_valid():
-            return response.BadRequest(serializer.errors)
-
-        data = serializer.data
-        project = get_object_or_404(Project, pk=data["project_id"])
-
-        self.check_permissions(request, "bulk_update_order", project)
-        services.update_userstories_order_in_bulk(data["bulk_stories"],
-                                                  project=project,
-                                                  field="sprint_order")
-        services.snapshot_userstories_in_bulk(data["bulk_stories"], request.user)
-        return response.NoContent()
+        return self._bulk_update_order("sprint_order", request, **kwargs)
 
     @list_route(methods=["POST"])
     def bulk_update_kanban_order(self, request, **kwargs):
-        serializer = serializers.UpdateUserStoriesOrderBulkSerializer(data=request.DATA)
-        if not serializer.is_valid():
-            return response.BadRequest(serializer.errors)
-
-        data = serializer.data
-        project = get_object_or_404(Project, pk=data["project_id"])
-
-        self.check_permissions(request, "bulk_update_order", project)
-        services.update_userstories_order_in_bulk(data["bulk_stories"],
-                                                  project=project,
-                                                  field="kanban_order")
-        services.snapshot_userstories_in_bulk(data["bulk_stories"], request.user)
-        return response.NoContent()
+        return self._bulk_update_order("kanban_order", request, **kwargs)
 
     @transaction.atomic
     def create(self, *args, **kwargs):

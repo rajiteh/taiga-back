@@ -60,6 +60,12 @@ class ProjectViewSet(ModelCrudViewSet):
         qs = models.Project.objects.all()
         return attach_votescount_to_queryset(qs, as_field="stars_count")
 
+    @list_route(methods=["GET"])
+    def by_slug(self, request):
+        slug = request.QUERY_PARAMS.get("slug", None)
+        project = get_object_or_404(models.Project, slug=slug)
+        return self.retrieve(request, pk=project.pk)
+
     @detail_route(methods=["GET", "PATCH"])
     def modules(self, request, pk=None):
         project = self.get_object()
@@ -79,6 +85,12 @@ class ProjectViewSet(ModelCrudViewSet):
         project = self.get_object()
         self.check_permissions(request, 'stats', project)
         return Response(services.get_stats_for_project(project))
+
+    @detail_route(methods=['get'])
+    def member_stats(self, request, pk=None):
+        project = self.get_object()
+        self.check_permissions(request, 'member_stats', project)
+        return Response(services.get_member_stats_for_project(project))
 
     @detail_route(methods=['get'])
     def issues_stats(self, request, pk=None):
@@ -147,6 +159,13 @@ class ProjectViewSet(ModelCrudViewSet):
         template.load_data_from_project(project)
         template.save()
         return Response(serializers.ProjectTemplateSerializer(template).data, status=201)
+
+    @detail_route(methods=['post'])
+    def leave(self, request, pk=None):
+        project = self.get_object()
+        self.check_permissions(request, 'leave', project)
+        services.remove_user_from_project(request.user, project)
+        return Response(status=status.HTTP_200_OK)
 
     def pre_save(self, obj):
         if not obj.id:
@@ -227,6 +246,10 @@ class MembershipViewSet(ModelCrudViewSet):
 
         services.send_invitation(invitation=invitation)
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+    def pre_delete(self, obj):
+        if obj.user is not None and not services.can_user_leave_project(obj.user, obj.project):
+            raise exc.BadRequest(_("At least one of the user must be an active admin"))
 
     def pre_save(self, obj):
         if not obj.token:

@@ -36,7 +36,6 @@ bleach._serialize = _serialize
 
 from django.core.cache import cache
 from django.utils.encoding import force_bytes
-from django.template.defaultfilters import slugify
 
 from markdown import Markdown
 
@@ -52,9 +51,10 @@ from .extensions.references import TaigaReferencesExtension
 
 
 # Bleach configuration
-bleach.ALLOWED_TAGS += ["p", "table", "th", "tr", "td", "h1", "h2", "h3",
-                        "div", "pre", "span", "hr", "dl", "dt", "dd", "sup",
-                        "img", "del", "br", "ins"]
+bleach.ALLOWED_TAGS += ["p", "table", "thead", "tbody", "th", "tr", "td", "h1",
+                        "h2", "h3", "h4", "h5", "h6", "div", "pre", "span",
+                        "hr", "dl", "dt", "dd", "sup", "img", "del", "br",
+                        "ins"]
 
 bleach.ALLOWED_STYLES.append("background")
 
@@ -63,18 +63,20 @@ bleach.ALLOWED_ATTRIBUTES["img"] = ["alt", "src"]
 bleach.ALLOWED_ATTRIBUTES["*"] = ["class", "style"]
 
 
-def _make_extensions_list(wikilinks_config=None, project=None):
+def _make_extensions_list(project=None):
     return [AutolinkExtension(),
             AutomailExtension(),
             SemiSaneListExtension(),
             SpacedLinkExtension(),
             StrikethroughExtension(),
-            WikiLinkExtension(wikilinks_config),
+            WikiLinkExtension(project),
             EmojifyExtension(),
             MentionsExtension(),
             TaigaReferencesExtension(project),
             "extra",
-            "codehilite"]
+            "codehilite",
+            "sane_lists",
+            "nl2br"]
 
 
 import diff_match_patch
@@ -99,14 +101,7 @@ def cache_by_sha(func):
 
 
 def _get_markdown(project):
-    def build_url(*args, **kwargs):
-        return args[1] + slugify(args[0])
-
-    wikilinks_config = {"base_url": "/project/{}/wiki/".format(project.slug),
-                        "end_url": "",
-                        "build_url": build_url}
-    extensions = _make_extensions_list(wikilinks_config=wikilinks_config,
-                                       project=project)
+    extensions = _make_extensions_list(project=project)
     md = Markdown(extensions=extensions)
     md.extracted_data = {"mentions": [], "references": []}
     return md

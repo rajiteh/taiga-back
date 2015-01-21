@@ -31,12 +31,10 @@ from djorm_pgarray.fields import TextArrayField
 from taiga.permissions.permissions import ANON_PERMISSIONS, USER_PERMISSIONS
 
 from taiga.base.tags import TaggedMixin
-from taiga.users.models import Role
 from taiga.base.utils.slug import slugify_uniquely
 from taiga.base.utils.dicts import dict_sum
 from taiga.base.utils.sequence import arithmetic_progression
 from taiga.base.utils.slug import slugify_uniquely_for_queryset
-from taiga.projects.notifications.services import create_notify_policy_if_not_exists
 
 from . import choices
 
@@ -224,16 +222,17 @@ class Project(ProjectDefaults, TaggedMixin, models.Model):
             user_stories = self.user_stories.all()
 
         # Get point instance that represent a null/undefined
-        # The current model allows dulplicate values. Because
+        # The current model allows duplicate values. Because
         # of it, we should get all poins with None as value
         # and use the first one.
         # In case of that not exists, creates one for avoid
-        # unxpected errors.
+        # unexpected errors.
         none_points = list(self.points.filter(value=None))
         if none_points:
             null_points_value = none_points[0]
         else:
-            null_points_value = Points.objects.create(name="?", value=None, project=self)
+            name = slugify_uniquely_for_queryset("?", self.points.all(), slugfield="name")
+            null_points_value = Points.objects.create(name=name, value=None, project=self)
 
         for us in user_stories:
             usroles = Role.objects.filter(role_points__in=us.role_points.all()).distinct()
@@ -255,23 +254,20 @@ class Project(ProjectDefaults, TaggedMixin, models.Model):
         return dict_sum(*flat_role_dicts)
 
     def _get_points_increment(self, client_requirement, team_requirement):
-        userstory_model = apps.get_model("userstories", "UserStory")
-        user_stories = userstory_model.objects.none()
         last_milestones = self.milestones.order_by('-estimated_finish')
         last_milestone = last_milestones[0] if last_milestones else None
         if last_milestone:
-            user_stories = userstory_model.objects.filter(
+            user_stories = self.user_stories.filter(
                 created_date__gte=last_milestone.estimated_finish,
-                project_id=self.id,
                 client_requirement=client_requirement,
                 team_requirement=team_requirement
-            ).prefetch_related('role_points', 'role_points__points')
+            )
         else:
-            user_stories = userstory_model.objects.filter(
-                project_id=self.id,
+            user_stories = self.user_stories.filter(
                 client_requirement=client_requirement,
                 team_requirement=team_requirement
-            ).prefetch_related('role_points', 'role_points__points')
+            )
+        user_stories = user_stories.prefetch_related('role_points', 'role_points__points')
         return self._get_user_stories_points(user_stories)
 
     @property
@@ -292,15 +288,26 @@ class Project(ProjectDefaults, TaggedMixin, models.Model):
 
     @property
     def closed_points(self):
-        return self._get_user_stories_points(self.user_stories.filter(is_closed=True).prefetch_related('role_points', 'role_points__points'))
+        return self.calculated_points["closed"]
 
     @property
     def defined_points(self):
-        return self._get_user_stories_points(self.user_stories.all().prefetch_related('role_points', 'role_points__points'))
+        return self.calculated_points["defined"]
 
     @property
     def assigned_points(self):
-        return self._get_user_stories_points(self.user_stories.filter(milestone__isnull=False).prefetch_related('role_points', 'role_points__points'))
+        return self.calculated_points["assigned"]
+
+    @property
+    def calculated_points(self):
+        user_stories = self.user_stories.all().prefetch_related('role_points', 'role_points__points')
+        closed_user_stories = user_stories.filter(is_closed=True)
+        assigned_user_stories = user_stories.filter(milestone__isnull=False)
+        return {
+            "defined": self._get_user_stories_points(user_stories),
+            "closed": self._get_user_stories_points(closed_user_stories),
+            "assigned": self._get_user_stories_points(assigned_user_stories),
+        }
 
 
 class ProjectModulesConfig(models.Model):
@@ -324,6 +331,8 @@ class UserStoryStatus(models.Model):
                                 verbose_name=_("order"))
     is_closed = models.BooleanField(default=False, null=False, blank=True,
                                     verbose_name=_("is closed"))
+    is_archived = models.BooleanField(default=False, null=False, blank=True,
+                                verbose_name=_("is archived"))
     color = models.CharField(max_length=20, null=False, blank=False, default="#999999",
                              verbose_name=_("color"))
     wip_limit = models.IntegerField(null=True, blank=True, default=None,
@@ -597,6 +606,7 @@ class ProjectTemplate(models.Model):
         for us_status in project.us_statuses.all():
             self.us_statuses.append({
                 "name": us_status.name,
+                "slug": us_status.slug,
                 "is_closed": us_status.is_closed,
                 "color": us_status.color,
                 "wip_limit": us_status.wip_limit,
@@ -615,6 +625,7 @@ class ProjectTemplate(models.Model):
         for task_status in project.task_statuses.all():
             self.task_statuses.append({
                 "name": task_status.name,
+                "slug": task_status.slug,
                 "is_closed": task_status.is_closed,
                 "color": task_status.color,
                 "order": task_status.order,
@@ -624,6 +635,7 @@ class ProjectTemplate(models.Model):
         for issue_status in project.issue_statuses.all():
             self.issue_statuses.append({
                 "name": issue_status.name,
+                "slug": issue_status.slug,
                 "is_closed": issue_status.is_closed,
                 "color": issue_status.color,
                 "order": issue_status.order,
@@ -670,6 +682,8 @@ class ProjectTemplate(models.Model):
             self.default_owner_role = self.roles[0].get("slug", None)
 
     def apply_to_project(self, project):
+        Role = apps.get_model("users", "Role")
+
         if project.id is None:
             raise Exception("Project need an id (must be a saved project)")
 
@@ -684,7 +698,9 @@ class ProjectTemplate(models.Model):
         for us_status in self.us_statuses:
             UserStoryStatus.objects.create(
                 name=us_status["name"],
+                slug=us_status["slug"],
                 is_closed=us_status["is_closed"],
+                is_archived=us_status["is_archived"],
                 color=us_status["color"],
                 wip_limit=us_status["wip_limit"],
                 order=us_status["order"],
@@ -702,6 +718,7 @@ class ProjectTemplate(models.Model):
         for task_status in self.task_statuses:
             TaskStatus.objects.create(
                 name=task_status["name"],
+                slug=task_status["slug"],
                 is_closed=task_status["is_closed"],
                 color=task_status["color"],
                 order=task_status["order"],
@@ -711,6 +728,7 @@ class ProjectTemplate(models.Model):
         for issue_status in self.issue_statuses:
             IssueStatus.objects.create(
                 name=issue_status["name"],
+                slug=issue_status["slug"],
                 is_closed=issue_status["is_closed"],
                 color=issue_status["color"],
                 order=issue_status["order"],
@@ -776,58 +794,3 @@ class ProjectTemplate(models.Model):
             project.default_severity = Severity.objects.get(name=self.default_options["severity"], project=project)
 
         return project
-
-
-# On membership object is deleted, update role-points relation.
-@receiver(signals.pre_delete, sender=Membership, dispatch_uid='membership_pre_delete')
-def membership_post_delete(sender, instance, using, **kwargs):
-    instance.project.update_role_points()
-
-
-# On membership object is deleted, update watchers of all objects relation.
-@receiver(signals.post_delete, sender=Membership, dispatch_uid='update_watchers_on_membership_post_delete')
-def update_watchers_on_membership_post_delete(sender, instance, using, **kwargs):
-    models = [apps.get_model("userstories", "UserStory"),
-              apps.get_model("tasks", "Task"),
-              apps.get_model("issues", "Issue")]
-
-    # `user_id` is used beacuse in some momments
-    # instance.user can contain pointer to now
-    # removed object from a database.
-    for model in models:
-        model.watchers.through.objects.filter(user_id=instance.user_id).delete()
-
-
-# On membership object is deleted, update watchers of all objects relation.
-@receiver(signals.post_save, sender=Membership, dispatch_uid='create-notify-policy')
-def create_notify_policy(sender, instance, using, **kwargs):
-    if instance.user:
-        create_notify_policy_if_not_exists(instance.project, instance.user)
-
-
-@receiver(signals.post_save, sender=Project, dispatch_uid='project_post_save')
-def project_post_save(sender, instance, created, **kwargs):
-    """
-    Populate new project dependen default data
-    """
-    if not created:
-        return
-
-    if instance._importing:
-        return
-
-    template = getattr(instance, "creation_template", None)
-    if template is None:
-        template = ProjectTemplate.objects.get(slug=settings.DEFAULT_PROJECT_TEMPLATE)
-    template.apply_to_project(instance)
-
-    instance.save()
-
-    try:
-        owner_role = instance.roles.get(slug=template.default_owner_role)
-    except Role.DoesNotExist:
-        owner_role = instance.roles.first()
-
-    if owner_role:
-        Membership.objects.create(user=instance.owner, project=instance, role=owner_role,
-                                  is_owner=True, email=instance.owner.email)
