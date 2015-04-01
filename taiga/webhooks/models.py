@@ -23,8 +23,13 @@ from django_pgjson.fields import JsonField
 class Webhook(models.Model):
     project = models.ForeignKey("projects.Project", null=False, blank=False,
                                 related_name="webhooks")
+    name = models.CharField(max_length=250, null=False, blank=False,
+                            verbose_name=_("name"))
     url = models.URLField(null=False, blank=False, verbose_name=_("URL"))
     key = models.TextField(null=False, blank=False, verbose_name=_("secret key"))
+
+    class Meta:
+        ordering = ['name', '-id']
 
 
 class WebhookLog(models.Model):
@@ -33,4 +38,11 @@ class WebhookLog(models.Model):
     url = models.URLField(null=False, blank=False, verbose_name=_("URL"))
     status = models.IntegerField(null=False, blank=False, verbose_name=_("Status code"))
     request_data = JsonField(null=False, blank=False, verbose_name=_("Request data"))
+    request_headers = JsonField(null=False, blank=False, verbose_name=_("Request headers"), default={})
     response_data = models.TextField(null=False, blank=False, verbose_name=_("Response data"))
+    response_headers = JsonField(null=False, blank=False, verbose_name=_("Response headers"), default={})
+    duration = models.FloatField(null=False, blank=False, verbose_name=_("Duration"), default=0)
+    created = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created', '-id']

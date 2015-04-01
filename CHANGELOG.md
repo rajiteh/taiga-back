@@ -1,9 +1,30 @@
 # Changelog #
 
-## 1.5.0 ??? (unreleased)
+
+## 1.6.0 Abies Bifolia (2015-03-17)
+
 
 ### Features
-- Improving some SQL queries
+- Added custom fields per project for user stories, tasks and issues.
+- Support of export to CSV user stories, tasks and issues.
+- Allow public projects.
+
+### Misc
+- New contrib plugin for HipChat (by Δndrea Stagi).
+- Lots of small and not so small bugfixes.
+- Updated some requirements.
+
+
+## 1.5.0 Betula Pendula - FOSDEM 2015 (2015-01-29)
+
+### Features
+- Improving SQL queries and performance.
+- Now you can export and import projects between Taiga instances.
+- Email redesign.
+- Support for archived status (not shown by default in Kanban).
+- Removing files from filesystem when deleting attachments.
+- Support for contrib plugins (existing yet: slack, hall and gogs).
+- Webhooks added (crazy integrations are welcome).
 
 ### Misc
 - Lots of small and not so small bugfixes.

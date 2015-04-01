@@ -16,7 +16,7 @@
 
 from django.utils.translation import ugettext_lazy as _
 
-from taiga.projects.models import Project, IssueStatus, TaskStatus, UserStoryStatus
+from taiga.projects.models import IssueStatus, TaskStatus, UserStoryStatus
 
 from taiga.projects.issues.models import Issue
 from taiga.projects.tasks.models import Task
@@ -91,6 +91,9 @@ class PushEventHook(BaseEventHook):
 
 
 def replace_github_references(project_url, wiki_text):
+    if wiki_text == None:
+        wiki_text = ""
+        
     template = "\g<1>[GitHub#\g<2>]({}/issues/\g<2>)\g<3>".format(project_url)
     return re.sub(r"(\s|^)#(\d+)(\s|$)", template, wiki_text, 0, re.M)
 

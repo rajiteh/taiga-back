@@ -180,6 +180,7 @@ INSTALLED_APPS = [
     "taiga.userstorage",
     "taiga.projects",
     "taiga.projects.references",
+    "taiga.projects.custom_attributes",
     "taiga.projects.history",
     "taiga.projects.notifications",
     "taiga.projects.attachments",
@@ -203,6 +204,7 @@ INSTALLED_APPS = [
     "djmail",
     "django_jinja",
     "django_jinja.contrib._humanize",
+    "sr",
     "easy_thumbnails",
     "raven.contrib.django.raven_compat",
     "django_transactional_cleanup",
@@ -280,13 +282,6 @@ AUTHENTICATION_BACKENDS = (
 
 MAX_AGE_AUTH_TOKEN = None
 MAX_AGE_CANCEL_ACCOUNT = 30 * 24 * 60 * 60 # 30 days in seconds
-
-ANONYMOUS_USER_ID = -1
-
-MAX_SEARCH_RESULTS = 100
-
-# FIXME: this seems not be used by any module
-API_LIMIT_PER_PAGE = 0
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
@@ -369,6 +364,9 @@ GITLAB_VALID_ORIGIN_IPS = []
 EXPORTS_TTL = 60 * 60 * 24  # 24 hours
 CELERY_ENABLED = False
 WEBHOOKS_ENABLED = False
+
+from .sr import *
+
 
 # NOTE: DON'T INSERT MORE SETTINGS AFTER THIS LINE
 TEST_RUNNER="django.test.runner.DiscoverRunner"

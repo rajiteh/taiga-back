@@ -62,20 +62,33 @@ def _send_request(webhook_id, url, key, data):
     signature = _generate_signature(serialized_data, key)
     headers = {
         "X-TAIGA-WEBHOOK-SIGNATURE": signature,
+        "Content-Type": "application/json"
     }
-    try:
-        response = requests.post(url, data=serialized_data, headers=headers)
-        WebhookLog.objects.create(webhook_id=webhook_id, url=url,
-                                  status=response.status_code,
-                                  request_data=data,
-                                  response_data=response.content)
-    except RequestException:
-        WebhookLog.objects.create(webhook_id=webhook_id, url=url, status=0,
-                                  request_data=data,
-                                  response_data="error-in-request")
+    request = requests.Request('POST', url, data=serialized_data, headers=headers)
+    prepared_request = request.prepare()
 
-    ids = [webhook_log.id for webhook_log in WebhookLog.objects.filter(webhook_id=webhook_id).order_by("-id")[10:]]
+    session = requests.Session()
+    try:
+        response = session.send(prepared_request)
+        webhook_log = WebhookLog.objects.create(webhook_id=webhook_id, url=url,
+                                                status=response.status_code,
+                                                request_data=data,
+                                                request_headers=dict(prepared_request.headers),
+                                                response_data=response.content,
+                                                response_headers=dict(response.headers),
+                                                duration=response.elapsed.total_seconds())
+    except RequestException as e:
+        webhook_log = WebhookLog.objects.create(webhook_id=webhook_id, url=url, status=0,
+                                                request_data=data,
+                                                request_headers=dict(prepared_request.headers),
+                                                response_data="error-in-request: {}".format(str(e)),
+                                                response_headers={},
+                                                duration=0)
+    session.close()
+
+    ids = [log.id for log in WebhookLog.objects.filter(webhook_id=webhook_id).order_by("-id")[10:]]
     WebhookLog.objects.filter(id__in=ids).delete()
+    return webhook_log
 
 
 @app.task
@@ -86,7 +99,7 @@ def change_webhook(webhook_id, url, key, obj, change):
     data['type'] = _get_type(obj)
     data['change'] = _serialize(change)
 
-    _send_request(webhook_id, url, key, data)
+    return _send_request(webhook_id, url, key, data)
 
 
 @app.task
@@ -96,7 +109,7 @@ def create_webhook(webhook_id, url, key, obj):
     data['action'] = "create"
     data['type'] = _get_type(obj)
 
-    _send_request(webhook_id, url, key, data)
+    return _send_request(webhook_id, url, key, data)
 
 
 @app.task
@@ -106,12 +119,12 @@ def delete_webhook(webhook_id, url, key, obj):
     data['action'] = "delete"
     data['type'] = _get_type(obj)
 
-    _send_request(webhook_id, url, key, data)
+    return _send_request(webhook_id, url, key, data)
 
 
 @app.task
 def resend_webhook(webhook_id, url, key, data):
-    _send_request(webhook_id, url, key, data)
+    return _send_request(webhook_id, url, key, data)
 
 
 @app.task
@@ -121,5 +134,4 @@ def test_webhook(webhook_id, url, key):
     data['action'] = "test"
     data['type'] = "test"
 
-    _send_request(webhook_id, url, key, data)
-
+    return _send_request(webhook_id, url, key, data)
