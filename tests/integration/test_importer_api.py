@@ -25,7 +25,7 @@ from .. import factories as f
 from django.apps import apps
 
 from taiga.base.utils import json
-from taiga.projects.models import Project
+from taiga.projects.models import Project, Membership
 from taiga.projects.issues.models import Issue
 from taiga.projects.userstories.models import UserStory
 from taiga.projects.tasks.models import Task
@@ -53,17 +53,17 @@ def test_valid_project_import_without_extra_data(client):
     data = {
         "name": "Imported project",
         "description": "Imported project",
+        "roles": [{"name": "Role"}]
     }
 
     response = client.post(url, json.dumps(data), content_type="application/json")
     assert response.status_code == 201
     response_data = json.loads(response.content.decode("utf-8"))
     must_empty_children = [
-        "issues", "user_stories", "roles", "us_statuses", "wiki_pages", "priorities",
+        "issues", "user_stories", "us_statuses", "wiki_pages", "priorities",
         "severities", "milestones", "points", "issue_types", "task_statuses",
-        "memberships", "issue_statuses", "wiki_links",
+        "issue_statuses", "wiki_links",
     ]
-
     assert all(map(lambda x: len(response_data[x]) == 0, must_empty_children))
     assert response_data["owner"] == user.email
 
@@ -88,6 +88,28 @@ def test_valid_project_import_with_not_existing_memberships(client):
     response_data = json.loads(response.content.decode("utf-8"))
     # The new membership and the owner membership
     assert len(response_data["memberships"]) == 2
+
+
+def test_valid_project_import_with_membership_uuid_rewrite(client):
+    user = f.UserFactory.create()
+    client.login(user)
+
+    url = reverse("importer-list")
+    data = {
+        "name": "Imported project",
+        "description": "Imported project",
+        "memberships": [{
+            "email": "with-uuid@email.com",
+            "role": "Role",
+            "token": "123",
+        }],
+        "roles": [{"name": "Role"}]
+    }
+
+    response = client.post(url, json.dumps(data), content_type="application/json")
+    assert response.status_code == 201
+    response_data = json.loads(response.content.decode("utf-8"))
+    assert Membership.objects.filter(email="with-uuid@email.com", token="123").count() == 0
 
 
 def test_valid_project_import_with_extra_data(client):
@@ -144,6 +166,22 @@ def test_valid_project_import_with_extra_data(client):
     assert response_data["owner"] == user.email
 
 
+def test_invalid_project_import_without_roles(client):
+    user = f.UserFactory.create()
+    client.login(user)
+
+    url = reverse("importer-list")
+    data = {
+        "name": "Imported project",
+        "description": "Imported project",
+    }
+
+    response = client.post(url, json.dumps(data), content_type="application/json")
+    assert response.status_code == 400
+    response_data = json.loads(response.content.decode("utf-8"))
+    assert len(response_data) == 2
+    assert Project.objects.filter(slug="imported-project").count() == 0
+
 def test_invalid_project_import_with_extra_data(client):
     user = f.UserFactory.create()
     client.login(user)
@@ -152,7 +190,10 @@ def test_invalid_project_import_with_extra_data(client):
     data = {
         "name": "Imported project",
         "description": "Imported project",
-        "roles": [{}],
+        "roles": [{
+            "permissions": [],
+            "name": "Test"
+        }],
         "us_statuses": [{}],
         "severities": [{}],
         "priorities": [{}],
@@ -165,7 +206,7 @@ def test_invalid_project_import_with_extra_data(client):
     response = client.post(url, json.dumps(data), content_type="application/json")
     assert response.status_code == 400
     response_data = json.loads(response.content.decode("utf-8"))
-    assert len(response_data) == 8
+    assert len(response_data) == 7
     assert Project.objects.filter(slug="imported-project").count() == 0
 
 
@@ -176,6 +217,10 @@ def test_valid_project_import_with_custom_attributes(client):
     data = {
         "name": "Imported project",
         "description": "Imported project",
+        "roles": [{
+            "permissions": [],
+            "name": "Test"
+        }],
         "userstorycustomattributes": [{
             "name": "custom attribute example 1",
             "description": "short description 1",
@@ -212,6 +257,10 @@ def test_invalid_project_import_with_custom_attributes(client):
     data = {
         "name": "Imported project",
         "description": "Imported project",
+        "roles": [{
+            "permissions": [],
+            "name": "Test"
+        }],
         "userstorycustomattributes": [{ }],
         "taskcustomattributes": [{ }],
         "issuecustomattributes": [{ }]

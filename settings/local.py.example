@@ -16,17 +16,17 @@
 
 from .development import *
 
-#DATABASES = {
-#    'default': {
-#        'ENGINE': 'transaction_hooks.backends.postgresql_psycopg2',
-#        'NAME': 'taiga',
-#        'USER': 'taiga',
-#        'PASSWORD': '',
-#        'HOST': '',
-#        'PORT': '',
-#    }
-#}
-#
+DATABASES = {
+    'default': {
+        'ENGINE': 'transaction_hooks.backends.postgresql_psycopg2',
+        'NAME': 'taiga',
+        'USER': 'taiga',
+        'PASSWORD': 'changeme',
+        'HOST': '',
+        'PORT': '',
+    }
+}
+
 #HOST="http://taiga.projects.kaleidos.net"
 #
 #MEDIA_ROOT = '/home/taiga/media'
@@ -53,7 +53,8 @@ from .development import *
 #REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"] = {
 #    "anon": "20/min",
 #    "user": "200/min",
-#    "import-mode": "20/sec"
+#    "import-mode": "20/sec",
+#    "import-dump-mode": "1/minute"
 #}
 
 # GITHUB SETTINGS
@@ -61,4 +62,3 @@ from .development import *
 #GITHUB_API_URL = "https://api.github.com/"
 #GITHUB_API_CLIENT_ID = "yourgithubclientid"
 #GITHUB_API_CLIENT_SECRET = "yourgithubclientsecret"
-

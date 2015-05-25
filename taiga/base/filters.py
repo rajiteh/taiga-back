@@ -19,9 +19,7 @@ import logging
 
 from django.apps import apps
 from django.db.models import Q
-from django.utils.translation import ugettext_lazy as _
-
-from rest_framework import filters
+from django.utils.translation import ugettext as _
 
 from taiga.base import exceptions as exc
 from taiga.base.api.utils import get_object_or_404
@@ -30,7 +28,20 @@ from taiga.base.api.utils import get_object_or_404
 logger = logging.getLogger(__name__)
 
 
-class QueryParamsFilterMixin(filters.BaseFilterBackend):
+
+class BaseFilterBackend(object):
+    """
+    A base class from which all filter backend classes should inherit.
+    """
+
+    def filter_queryset(self, request, queryset, view):
+        """
+        Return a filtered queryset.
+        """
+        raise NotImplementedError(".filter_queryset() must be overridden.")
+
+
+class QueryParamsFilterMixin(BaseFilterBackend):
     _special_values_dict = {
         'true': True,
         'false': False,
@@ -60,7 +71,7 @@ class QueryParamsFilterMixin(filters.BaseFilterBackend):
             try:
                 queryset = queryset.filter(**query_params)
             except ValueError:
-                raise exc.BadRequest("Error in filter params types.")
+                raise exc.BadRequest(_("Error in filter params types."))
 
         return queryset
 
@@ -107,7 +118,7 @@ class PermissionBasedFilterBackend(FilterBackend):
                 logger.error("Filtering project diferent value than an integer: {}".format(
                     request.QUERY_PARAMS["project"]
                 ))
-                raise exc.BadRequest("'project' must be an integer value.")
+                raise exc.BadRequest(_("'project' must be an integer value."))
 
         qs = queryset
 
@@ -196,7 +207,7 @@ class CanViewProjectObjFilterBackend(FilterBackend):
                 logger.error("Filtering project diferent value than an integer: {}".format(
                     request.QUERY_PARAMS["project"]
                 ))
-                raise exc.BadRequest("'project' must be an integer value.")
+                raise exc.BadRequest(_("'project' must be an integer value."))
 
         qs = queryset
 
@@ -212,17 +223,10 @@ class CanViewProjectObjFilterBackend(FilterBackend):
 
             projects_list = [membership.project_id for membership in memberships_qs]
 
-        ####
-        # TODO: Temporary fix for visualization of public projects in the interface
-            qs = qs.filter(id__in=projects_list)
+            qs = qs.filter((Q(id__in=projects_list) |
+                            Q(public_permissions__contains=["view_project"])))
         else:
-            qs = qs.none()
-
-        #     qs = qs.filter((Q(id__in=projects_list) |
-        #                     Q(public_permissions__contains=["view_project"])))
-        # else:
-        #     qs = qs.filter(anon_permissions__contains=["view_project"])
-        ####
+            qs = qs.filter(anon_permissions__contains=["view_project"])
 
         return super().filter_queryset(request, qs.distinct(), view)
 
@@ -250,8 +254,9 @@ class MembersFilterBackend(PermissionBasedFilterBackend):
             try:
                 project_id = int(request.QUERY_PARAMS["project"])
             except:
-                logger.error("Filtering project diferent value than an integer: {}".format(request.QUERY_PARAMS["project"]))
-                raise exc.BadRequest("'project' must be an integer value.")
+                logger.error("Filtering project diferent value than an integer: {}".format(
+                                                              request.QUERY_PARAMS["project"]))
+                raise exc.BadRequest(_("'project' must be an integer value."))
 
         if project_id:
             Project = apps.get_model('projects', 'Project')
@@ -275,9 +280,13 @@ class MembersFilterBackend(PermissionBasedFilterBackend):
                 if not is_member and not has_project_public_view_permission:
                     qs = qs.none()
 
-            qs = qs.filter(Q(memberships__project_id__in=projects_list) |
-                           Q(memberships__project__public_permissions__contains=[self.permission])|
-                           Q(id=request.user.id))
+            q = Q(memberships__project_id__in=projects_list) | Q(id=request.user.id)
+
+            #If there is no selected project we want access to users from public projects
+            if not project:
+                q = q | Q(memberships__project__public_permissions__contains=[self.permission])
+
+            qs = qs.filter(q)
 
         else:
             if project and not "view_project" in project.anon_permissions:
